@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQLPD Detective - The Missing Data Case</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+        
+        body {
+            font-family: 'VT323', monospace;
+            background-color: #050505;
+            color: #e5e5e5;
+            background-image: radial-gradient(circle at center, #1a1a1a 0%, #000 100%);
+        }
+        
+        .scanlines {
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.15));
+            background-size: 100% 4px;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        .pixel-art {
+            image-rendering: pixelated;
+        }
+
+        .terminal-input {
+            caret-color: #4ade80;
+        }
+
+        @keyframes idle-breathe {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-2px); }
+        }
+        @keyframes thinking {
+            0%, 100% { transform: rotate(0deg); }
+            25% { transform: rotate(-2deg); }
+            75% { transform: rotate(2deg); }
+        }
+        @keyframes success-glow {
+            0%, 100% { filter: drop-shadow(0 0 2px #4ade80); }
+            50% { filter: drop-shadow(0 0 10px #4ade80); }
+        }
+
+        .anim-idle { animation: idle-breathe 2.5s infinite; }
+        .anim-thinking { animation: thinking 1s infinite; }
+        .anim-success { animation: success-glow 1.5s infinite; }
+    </style>
+</head>
+<body class="h-screen w-full flex items-center justify-center p-4 relative overflow-hidden">
+    <div class="scanlines"></div>
+    
+    <!-- ซ่อน YouTube Player ไว้เพื่อใช้เป็น BGM -->
+    <div style="position: absolute; top: -9999px; left: -9999px;">
+        <div id="youtubePlayer"></div>
+    </div>
+
+    <!-- แผงควบคุมเพลง BGM -->
+    <div class="absolute top-4 right-4 z-40 bg-stone-900 border-2 border-stone-700 p-2 rounded flex items-center gap-2">
+        <span class="text-amber-500">BGM:</span>
+        <input type="range" id="volControl" min="0" max="100" step="5" value="30" class="w-24 cursor-pointer" disabled>
+        <button id="playBtn" class="text-stone-500 border border-stone-700 px-2 py-1 rounded cursor-not-allowed" disabled>Loading BGM...</button>
+    </div>
+
+    <!-- หน้าต่างเกมหลัก -->
+    <div class="w-full max-w-6xl bg-stone-950 border-4 border-stone-600 rounded-lg shadow-2xl flex flex-col h-[90vh] relative z-10">
+        
+        <div class="bg-stone-800 border-b-2 border-stone-600 p-3 flex justify-between items-center px-6">
+            <h1 class="text-3xl text-amber-500 tracking-widest">SQLPD :: THE MISSING DATA CASE</h1>
+            <span class="text-green-500 text-xl animate-pulse" id="missionCounter">ภารกิจ: 1 / 5</span>
+        </div>
+
+        <div class="flex flex-1 overflow-hidden">
+            
+            <!-- แผงด้านซ้าย: ตัวละครและข้อมูลคดี -->
+            <div class="w-1/3 border-r-2 border-stone-700 bg-black p-6 flex flex-col overflow-y-auto">
+                
+                <div class="flex-none flex justify-center mb-6 h-48 border-2 border-stone-800 rounded bg-stone-900/50 p-4">
+                    <!-- นำภาพนักสืบ 32x32 ของคุณมาใส่ตรง src นี้ (ตอนนี้ตั้งชื่อสมมติเป็น detective.png) -->
+                    <img id="detectiveSprite" src="user___pixellab-Create-a-32x32-pixel-art-portr-1795440763250 (1).gif" alt="Detective" class="h-full object-contain pixel-art anim-idle transition-all" onerror="this.src='https://via.placeholder.com/128?text=Add+Image'">
+                </div>
+
+                <h2 class="text-2xl text-stone-300 border-b border-stone-700 pb-2 mb-4">MISSION DETAILS</h2>
+                <div class="mb-4">
+                    <p id="missionDesc" class="text-stone-300 text-xl leading-relaxed bg-stone-900 p-4 border border-stone-700 rounded"></p>
+                </div>
+
+                <h2 class="text-2xl text-stone-300 border-b border-stone-700 pb-2 mb-4">DATABASE SCHEMA</h2>
+                <div class="bg-stone-900 p-4 border border-stone-700 rounded mb-4">
+                    <p class="text-green-400 text-xl mb-2">Table: <span class="font-bold">suspects</span></p>
+                    <ul class="text-stone-400 text-lg list-disc list-inside">
+                        <li>id (INT)</li>
+                        <li>name (VARCHAR)</li>
+                        <li>city (VARCHAR)</li>
+                        <li>occupation (VARCHAR)</li>
+                        <li>alibi (VARCHAR)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- แผงด้านขวา: ระบบเขียน SQL -->
+            <div class="w-2/3 flex flex-col bg-stone-950">
+                
+                <div class="flex-none p-6 border-b-2 border-stone-800 bg-stone-900">
+                    <div class="text-stone-500 mb-2 text-lg">QUERY_EDITOR.exe</div>
+                    <textarea id="sqlInput" class="terminal-input w-full h-32 bg-black border-2 border-stone-700 text-green-400 p-4 focus:outline-none focus:border-green-500 font-mono resize-none text-2xl" placeholder="พิมพ์คำสั่ง SQL ของคุณที่นี่..." oninput="setThinkingAnim()"></textarea>
+                    
+                    <div class="mt-4 flex justify-between items-center">
+                        <button onclick="showHint()" class="text-amber-500 hover:text-amber-400 border border-amber-600 hover:bg-amber-900/30 px-4 py-2 rounded text-lg">
+                            ? ขอคำใบ้
+                        </button>
+                        <button onclick="runQuery()" class="bg-green-800 hover:bg-green-700 text-white px-8 py-2 rounded text-xl font-bold tracking-widest shadow-[0_0_15px_rgba(21,128,61,0.4)]">
+                            EXECUTE
+                        </button>
+                    </div>
+                    
+                    <div id="hintBox" class="hidden mt-4 p-3 bg-amber-900/20 border border-amber-700 text-amber-200 text-lg rounded"></div>
+                </div>
+
+                <div class="flex-1 p-6 bg-black overflow-hidden flex flex-col">
+                    <h3 class="text-xl text-stone-400 mb-3">OUTPUT TERMINAL:</h3>
+                    
+                    <div id="statusMessage" class="hidden mb-4 p-3 border rounded text-xl text-center font-bold tracking-wider"></div>
+
+                    <div class="flex-1 overflow-auto border border-stone-800 bg-stone-900/50">
+                        <table id="resultTable" class="w-full text-left text-lg hidden">
+                            <thead class="bg-stone-800 text-stone-300 sticky top-0" id="tableHead"></thead>
+                            <tbody id="tableBody" class="text-green-400"></tbody>
+                        </table>
+                    </div>
+                    
+                    <button id="nextBtn" onclick="nextMission()" class="hidden mt-4 bg-amber-700 hover:bg-amber-600 text-white px-6 py-3 rounded text-xl font-bold text-center w-full">
+                        สืบสวนเบาะแสถัดไป >>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- โหลด YouTube IFrame API -->
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
+        // ระบบเสียง BGM ด้วย YouTube
+        let ytPlayer;
+        const playBtn = document.getElementById('playBtn');
+        const volControl = document.getElementById('volControl');
+        let isPlaying = false;
+
+        function onYouTubeIframeAPIReady() {
+            ytPlayer = new YT.Player('youtubePlayer', {
+                height: '1', // ซ่อนให้เล็กที่สุด
+                width: '1',
+                videoId: 'c2Cc-6nT0S4', // รหัสวิดีโอจากลิงก์ที่คุณส่งมา
+                playerVars: {
+                    'autoplay': 0,
+                    'controls': 0,
+                    'disablekb': 1,
+                    'loop': 1,
+                    'playlist': 'c2Cc-6nT0S4' // สำหรับให้วนลูป
+                },
+                events: {
+                    'onReady': onPlayerReady
+                }
+            });
+        }
+
+        function onPlayerReady(event) {
+            ytPlayer.setVolume(30); // ตั้งค่าความดังเริ่มต้น (0-100)
+            
+            // เปิดใช้งานปุ่มหลังโหลดเพลงเสร็จ
+            playBtn.disabled = false;
+            volControl.disabled = false;
+            playBtn.textContent = 'Play BGM';
+            playBtn.classList.replace('text-stone-500', 'text-green-500');
+            playBtn.classList.replace('border-stone-700', 'border-green-700');
+            playBtn.classList.replace('cursor-not-allowed', 'hover:bg-green-900/50');
+
+            playBtn.addEventListener('click', () => {
+                if (!isPlaying) {
+                    ytPlayer.playVideo();
+                    isPlaying = true;
+                    playBtn.textContent = 'Pause';
+                    playBtn.classList.replace('text-green-500', 'text-amber-500');
+                    playBtn.classList.replace('border-green-700', 'border-amber-700');
+                    playBtn.classList.replace('hover:bg-green-900/50', 'hover:bg-amber-900/50');
+                } else {
+                    ytPlayer.pauseVideo();
+                    isPlaying = false;
+                    playBtn.textContent = 'Play BGM';
+                    playBtn.classList.replace('text-amber-500', 'text-green-500');
+                    playBtn.classList.replace('border-amber-700', 'border-green-700');
+                    playBtn.classList.replace('hover:bg-amber-900/50', 'hover:bg-green-900/50');
+                }
+            });
+
+            volControl.addEventListener('input', (e) => {
+                ytPlayer.setVolume(e.target.value);
+            });
+        }
+
+        // ==========================================
+        // ระบบสืบสวนและโจทย์คดี
+        // ==========================================
+        const db = [
+            { id: 1, name: 'Arthur Pendelton', city: 'Bangkok', occupation: 'Merchant', alibi: 'At the bar' },
+            { id: 2, name: 'Silas Vane', city: 'London', occupation: 'Hacker', alibi: 'Unknown' },
+            { id: 3, name: 'Elena Rostova', city: 'Bangkok', occupation: 'Hacker', alibi: 'Working late' },
+            { id: 4, name: 'Marcus Thorne', city: 'Tokyo', occupation: 'Merchant', alibi: 'Sleeping' },
+            { id: 5, name: 'John Doe', city: 'Bangkok', occupation: 'Driver', alibi: 'Unknown' }
+        ];
+
+        const missions = [
+            {
+                id: 1,
+                desc: "สายสืบแจ้งว่ามีฐานข้อมูลผู้ต้องสงสัยส่งเข้ามาในระบบ โปรดดึงข้อมูลผู้ต้องสงสัยทุกคนออกมาดูเป็นอันดับแรก",
+                hint: "ใช้ SELECT * เพื่อดึงทุกคอลัมน์จากตาราง suspects",
+                answer: "select * from suspects",
+                columns: ['id', 'name', 'city', 'occupation', 'alibi'],
+                validate: (sql) => sql === "select * from suspects",
+                resultData: db
+            },
+            {
+                id: 2,
+                desc: "เราต้องจำกัดวงการค้นหา พยานเห็นคนร้ายหลบหนีไปในเมือง 'Bangkok' จงแสดงข้อมูลของผู้ต้องสงสัยที่อยู่ในเมืองนี้เท่านั้น",
+                hint: "เพิ่ม WHERE city = 'Bangkok'",
+                answer: "select * from suspects where city = 'bangkok'",
+                columns: ['id', 'name', 'city', 'occupation', 'alibi'],
+                validate: (sql) => sql.includes("where") && sql.includes("city") && sql.includes("bangkok"),
+                resultData: db.filter(r => r.city === 'Bangkok')
+            },
+            {
+                id: 3,
+                desc: "มีสายรายงานว่าคนร้ายเชี่ยวชาญด้านคอมพิวเตอร์ จงดึงเฉพาะชื่อ (name) และอาชีพ (occupation) ของผู้ต้องสงสัยที่เป็น 'Hacker'",
+                hint: "เลือกคอลัมน์ name, occupation ตามด้วย WHERE occupation = 'Hacker'",
+                answer: "select name, occupation from suspects where occupation = 'hacker'",
+                columns: ['name', 'occupation'],
+                validate: (sql) => sql.includes("select name, occupation") && sql.includes("hacker"),
+                resultData: db.filter(r => r.occupation === 'Hacker').map(r => ({name: r.name, occupation: r.occupation}))
+            },
+            {
+                id: 4,
+                desc: "รวบรวมรายชื่อผู้ต้องสงสัยที่ 'Unknown' (ไม่ทราบ) ที่อยู่เพื่อนำมาสอบสวน เรียงลำดับชื่อจาก A-Z",
+                hint: "ใช้ WHERE alibi = 'Unknown' แล้วต่อด้วย ORDER BY name ASC",
+                answer: "select * from suspects where alibi = 'unknown' order by name asc",
+                columns: ['id', 'name', 'city', 'occupation', 'alibi'],
+                validate: (sql) => sql.includes("unknown") && sql.includes("order by name"),
+                resultData: db.filter(r => r.alibi === 'Unknown').sort((a,b) => a.name.localeCompare(b.name))
+            },
+            {
+                id: 5,
+                desc: "ภารกิจสุดท้าย! ชี้ตัวคนร้ายที่อยู่ใน 'Bangkok' และไม่มีข้อแก้ตัว (alibi เป็น 'Unknown') ส่งชื่อเขามาให้เรา!",
+                hint: "ใช้ AND เชื่อม 2 เงื่อนไขใน WHERE",
+                answer: "select name from suspects where city = 'bangkok' and alibi = 'unknown'",
+                columns: ['name'],
+                validate: (sql) => sql.includes("city") && sql.includes("bangkok") && sql.includes("and") && sql.includes("alibi"),
+                resultData: db.filter(r => r.city === 'Bangkok' && r.alibi === 'Unknown').map(r => ({name: r.name}))
+            }
+        ];
+
+        let currentMission = 0;
+        const sprite = document.getElementById('detectiveSprite');
+
+        function loadMission() {
+            const m = missions[currentMission];
+            document.getElementById('missionCounter').textContent = `ภารกิจ: ${currentMission + 1} / 5`;
+            document.getElementById('missionDesc').textContent = m.desc;
+            document.getElementById('hintBox').textContent = "Hint: " + m.hint;
+            document.getElementById('hintBox').classList.add('hidden');
+            document.getElementById('sqlInput').value = '';
+            document.getElementById('resultTable').classList.add('hidden');
+            document.getElementById('statusMessage').classList.add('hidden');
+            document.getElementById('nextBtn').classList.add('hidden');
+            setIdleAnim();
+        }
+
+        function showHint() {
+            document.getElementById('hintBox').classList.remove('hidden');
+        }
+
+        let typingTimer;
+        function setThinkingAnim() {
+            sprite.className = "h-full object-contain pixel-art anim-thinking transition-all";
+            clearTimeout(typingTimer);
+            typingTimer = setTimeout(setIdleAnim, 1000); 
+        }
+
+        function setIdleAnim() {
+            sprite.className = "h-full object-contain pixel-art anim-idle transition-all";
+        }
+
+        function setSuccessAnim() {
+            sprite.className = "h-full object-contain pixel-art anim-success transition-all";
+        }
+
+        function runQuery() {
+            const m = missions[currentMission];
+            let sql = document.getElementById('sqlInput').value.toLowerCase().replace(/\s+/g, ' ').trim();
+            if (sql.endsWith(';')) sql = sql.slice(0, -1); 
+
+            const statusMsg = document.getElementById('statusMessage');
+            const table = document.getElementById('resultTable');
+            const thead = document.getElementById('tableHead');
+            const tbody = document.getElementById('tableBody');
+
+            thead.innerHTML = '';
+            tbody.innerHTML = '';
+            statusMsg.classList.remove('hidden', 'bg-green-900/50', 'text-green-400', 'border-green-600', 'bg-red-900/50', 'text-red-400', 'border-red-600', 'bg-amber-900/50', 'text-amber-400', 'border-amber-600');
+
+            if (m.validate(sql)) {
+                statusMsg.textContent = 'MISSION PASSED: พบข้อมูลที่ต้องการแล้ว!';
+                statusMsg.classList.add('bg-green-900/50', 'text-green-400', 'border-green-600');
+                setSuccessAnim();
+                
+                let trHead = document.createElement('tr');
+                m.columns.forEach(col => {
+                    let th = document.createElement('th');
+                    th.className = "p-3 border-b border-stone-700 border-r";
+                    th.textContent = col;
+                    trHead.appendChild(th);
+                });
+                thead.appendChild(trHead);
+
+                m.resultData.forEach(row => {
+                    let trBody = document.createElement('tr');
+                    trBody.className = "border-b border-stone-800 hover:bg-stone-900";
+                    m.columns.forEach(col => {
+                        let td = document.createElement('td');
+                        td.className = "p-3 border-r border-stone-800";
+                        td.textContent = row[col];
+                        trBody.appendChild(td);
+                    });
+                    tbody.appendChild(trBody);
+                });
+                
+                table.classList.remove('hidden');
+
+                if (currentMission < missions.length - 1) {
+                    document.getElementById('nextBtn').classList.remove('hidden');
+                } else {
+                    document.getElementById('nextBtn').classList.remove('hidden');
+                    document.getElementById('nextBtn').textContent = "CASE CLOSED: ปิดคดีสำเร็จ!!";
+                    document.getElementById('nextBtn').onclick = () => alert("ยินดีด้วย! คุณปิดคดีนี้ได้สำเร็จ");
+                }
+            } else {
+                statusMsg.textContent = 'ERROR: คำสั่ง SQL ไม่ถูกต้อง หรือได้ข้อมูลไม่ตรงตามหลักฐาน';
+                statusMsg.classList.add('bg-red-900/50', 'text-red-400', 'border-red-600');
+                table.classList.add('hidden');
+                setIdleAnim();
+            }
+        }
+
+        function nextMission() {
+            currentMission++;
+            loadMission();
+        }
+
+        loadMission();
+    </script>
+</body>
+</html>
